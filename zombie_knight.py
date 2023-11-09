@@ -18,7 +18,7 @@ clock = pygame.time.Clock()
 #Define Classes
 class Game():
     """A class to help manage gameplay"""
-    def __init__(self):
+    def __init__(self, player, zombie_group, platform_group, portal_group,bullet_group, ruby_group):
         """Initiate the game"""
         #Set constant variable
         self.STARTING_ROUND_TIME = 30
@@ -29,10 +29,25 @@ class Game():
         self.round_number = 1
         self.frame_count = 0
         self.round_time = self.STARTING_ROUND_TIME
+        #variable to add zombie automatically
+        self.zombie_creation_time = self.STARTING_ZOMBIE_CREATION_TIME
 
         #Set fonts
         self.title_font = pygame.font.Font("fonts/Poultrygeist.ttf",48)
         self.UI_font = pygame.font.Font("fonts/Pixel.ttf",24)
+
+        #Set sounds
+        self.lost_ruby_sound = pygame.mixer.Sound("sounds/lost_ruby.wav")
+        self.ruby_pickup_sound = pygame.mixer.Sound("sounds/ruby_pickup.wav")
+        pygame.mixer.music.load("sounds/level_music.wav")
+
+        #Attach group and sprite
+        self.player = player
+        self.zombie_group = zombie_group
+        self.platform_group = platform_group
+        self.portal_group = portal_group
+        self.bullet_group = bullet_group
+        self.ruby_group = ruby_group
 
     def update(self):
         """Update the game"""
@@ -42,6 +57,10 @@ class Game():
         if self.frame_count % FPS == 0:
             self.round_time -= 1
             self.frame_count = 0
+        self.check_collisions()
+        self.add_zombie()
+        self.check_round_completion()
+        self.check_game_over()
 
     def draw(self):
         """Draw the game UI"""
@@ -54,7 +73,7 @@ class Game():
         score_rect = score_text.get_rect()
         score_rect.topleft = (10, WINDOW_HEIGHT-50)
         #Health
-        health_text = self.UI_font.render("Health: " + str(100), True, WHITE)
+        health_text = self.UI_font.render("Health: " + str(self.player.health), True, WHITE)
         health_rect = health_text.get_rect()
         health_rect.topleft = (10, WINDOW_HEIGHT-25) 
         #Ttle
@@ -79,31 +98,157 @@ class Game():
 
     def add_zombie(self):
         """Add a zombie to the game"""
-        pass
+        #Check to add a zombie every second
+        if self.frame_count % FPS == 0:
+            #only add a zombie if zombie creation time has passed
+            if self.round_time % self.zombie_creation_time == 0:
+                # 5+round ==> maximum speed
+                zombie = Zombie(self.platform_group,self.portal_group, self.round_number, 5+self.round_number)
+                self.zombie_group.add(zombie)
 
     def check_collisions(self):
         """Cehck collisions that affect gameplay"""
-        pass
+        #See if any bullet in the bullet group hit a zombie in the zombie group
+        #True -> destroy bullet gorup
+        #False -> dont want to destroy zombie yet because the bullet just knocks zombies out
+        collision_dict = pygame.sprite.groupcollide(self.bullet_group, self.zombie_group, True, False)
+        if collision_dict:
+            #zombies in collision
+            #the 1st group is key(bullet_group)
+            # 2nd group is value(zombie group)
+            for zombies in collision_dict.values():
+                #accessing individuals zombie in zombie_group
+                for zombie in zombies:
+                    zombie.hit_sound.play()
+                    zombie.is_dead = True
+                    zombie.animate_death = True
+
+        #See if a player stopped a dead zombie to finish it or collided with a live zombie to take damage
+        collision_list = pygame.sprite.spritecollide(self.player, self.zombie_group, False)
+        if collision_list:
+            for zombie in collision_list:
+                #The zombie is dead
+                if zombie.is_dead == True:
+                    zombie.kick_sound.play()
+                    zombie.kill()
+                    self.score = 25
+
+                    ruby = Ruby(self.platform_group, self.portal_group)
+                    self.ruby_group.add(ruby)
+                #Zombie is not dead
+                else:
+                    self.player.health -= 20
+                    self.player.hit_sound.play()
+                    self.player.position.x -= 256*zombie.direction
+                    self.player.rect.bottomleft = self.player.position
+        
+        #See if a player collided with a ruby
+        if pygame.sprite.spritecollide(self.player, self.ruby_group, True):
+            self.ruby_pickup_sound.play()
+            self.score += 100
+            self.player.health += 10
+            if self.player.health > self.player.STARTING_HEALTH:
+                self.player.health = self.player.STARTING_HEALTH
+        
+        #SEe if a living zombie collided with ruby 
+        for zombie in self.zombie_group:
+            if zombie.is_dead == False:
+                if pygame.sprite.spritecollide(zombie, self.ruby_group, True):
+                    self.lost_ruby_sound.play()
+                    zombie = Zombie(self.platform_group,self.portal_group, self.round_number, 5+self.round_number)
+                    self.zombie_group.add(zombie)
+
 
     def check_round_completion(self):
         """Check if the player survived a single night"""
-        pass
+        if self.round_time == 0:
+            self.start_new_round()
 
     def check_game_over(self):
         """Check to see if the player lose the game"""
-        pass
+        if self.player.health <= 0:
+            pygame.mixer.music.stop()
+            self.pause_game("Game Over! Final Score: " + str(self.score), "Press 'Enter' to play again...")
+            self.reset_game()
 
     def start_new_round(self):
         """Start a new night"""
-        pass
+        self.round_number += 1
+
+        #Decrease Zombie creation time...more zombies
+        if self.round_number <self.STARTING_ZOMBIE_CREATION_TIME:
+            self.zombie_creation_time -= 1
+
+        #Reset round values
+        self.round_time = self.STARTING_ROUND_TIME
+
+        self.zombie_group.empty()
+        self.ruby_group.empty()
+        self.bullet_group.empty()
+
+        self.player.reset()
+
+        self.pause_game("You survived the night!", "Press 'Enter' to continue...")
 
     def pause_game(self, main_text, sub_text):
         """Pause the game"""
-        pass
+        global running
+        
+        pygame.mixer.music.pause()
+
+        #Set colors
+        WHITE = (255,255,255)
+        BLACK = (0,0,0)
+        GREEN = (25,200,25)
+
+        #Create main pause text
+        main_text=  self.title_font.render(main_text,True,GREEN)
+        main_rect = main_text.get_rect()
+        main_rect.center = (WINDOW_WIDTH/2,WINDOW_HEIGHT/2)
+
+        sub_text=  self.title_font.render(sub_text,True,WHITE)
+        sub_rect = sub_text.get_rect()
+        sub_rect.center = (WINDOW_WIDTH/2,WINDOW_HEIGHT/2 + 64)
+
+        #Display the pause text
+        display_surface.fill(BLACK)
+        display_surface.blit(main_text, main_rect)
+        display_surface.blit(sub_text,sub_rect)
+        pygame.display.update()
+
+        #Pause the game until user hits enter or quits
+        is_paused = True
+        while is_paused:
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN:
+                    #User wants to continue
+                    if event.key == pygame.K_RETURN:
+                        is_paused = False
+                        pygame.mixer.music.unpause()
+                #User wants to quit
+                if event.type==pygame.QUIT:
+                    is_paused = False
+                    running = False
+                    pygame.mixer.music.stop()
 
     def reset_game(self):
         """Rest the game"""
-        pass
+        #Reset game values
+        self.score = 0
+        self.round_number = 1
+        self.round_time = self.STARTING_ROUND_TIME
+        self.zombie_creation_time = self.STARTING_ZOMBIE_CREATION_TIME
+        
+        #Reset the player
+        self.player.health = self.player.STARTING_HEALTH
+        self.player.reset()
+
+        #Empty sprite groups
+        self.zombie_group.empty()
+        self.ruby_group.empty()
+        self.bullet_group.empty()
+        
+        pygame.mixer.music.play(-1,0.0)
 
 class Tile(pygame.sprite.Sprite):
     """A class to represent a 32x32 pixel area in our display"""
@@ -615,7 +760,21 @@ class Zombie(pygame.sprite.Sprite):
                 self.animate(self.rise_left_sprites,.095)
     def animate(self, sprite_list, speed):
         """Animate the zombie's actions"""
-        pass
+        if self.current_sprite < len(sprite_list) -1:
+            self.current_sprite += speed
+        else:
+            self.current_sprite = 0
+            #End the death animation
+            if self.animate_death:
+                self.current_sprite = len(sprite_list) -1
+                self.animate_death = False
+            #End the rise animation
+            if self.animate_rise: 
+                self.animate_rise = False
+                self.is_dead = False
+                self.frame_count = 0
+                self.round_time = 0
+        self.image = sprite_list[int(self.current_sprite)]
 
 class RubyMaker(pygame.sprite.Sprite):
     """A tile that is an image. A ruby will be generated here."""
@@ -662,19 +821,89 @@ class Ruby(pygame.sprite.Sprite):
     def __init__(self,platform_group, portal_group):
         """Initalize the ruby"""
         super().__init__()
-        pass
+        #Set constant variables
+        self.VERTICAL_ACCELERATION = 3
+        self.HORIZONTAL_VELOCITY = 5
+
+        #Animation Framse
+        self.ruby_sprites= []
+        self.ruby_sprites.append(pygame.transform.scale(pygame.image.load("images/ruby/tile000.png"),(64,64)))
+        self.ruby_sprites.append(pygame.transform.scale(pygame.image.load("images/ruby/tile001.png"),(64,64)))
+        self.ruby_sprites.append(pygame.transform.scale(pygame.image.load("images/ruby/tile002.png"),(64,64)))
+        self.ruby_sprites.append(pygame.transform.scale(pygame.image.load("images/ruby/tile003.png"),(64,64)))
+        self.ruby_sprites.append(pygame.transform.scale(pygame.image.load("images/ruby/tile004.png"),(64,64)))
+        self.ruby_sprites.append(pygame.transform.scale(pygame.image.load("images/ruby/tile005.png"),(64,64)))
+        self.ruby_sprites.append(pygame.transform.scale(pygame.image.load("images/ruby/tile006.png"),(64,64)))
+
+        #Load image and get rect
+        self.current_sprite = 0
+        self.image = self.ruby_sprites[self.current_sprite]
+        self.rect = self.image.get_rect()
+        self.rect.bottomleft = (WINDOW_WIDTH/2, 100)
+
+        #Attach sprite groups
+        self.platform_group = platform_group
+        self.portal_group = portal_group
+
+        #Load sounds
+        self.portal_sound = pygame.mixer.Sound("sounds/portal_sound.wav")
+
+        self.position = vector(self.rect.x,self.rect.y)
+        self.velocity = vector(random.choice([-1*self.HORIZONTAL_VELOCITY, self.HORIZONTAL_VELOCITY]), 0)
+        self.acceleration = vector(0,self.VERTICAL_ACCELERATION)
+
+
     def update(self):
         """Update the ruby"""
-        pass
+        self.animate(self.ruby_sprites,.25)
+        self.move()
+        self.check_collisions()
+
     def move(self):
         """Move the ruby"""
-        pass
+        #We dont need to update the acceleration vector because it never changes
+
+        self.velocity+= self.acceleration
+        self.position += self.velocity+ 0.5*self.acceleration
+
+        #update rect based on the calculation 
+        if self.position.x < 0:
+            self.position.x = WINDOW_WIDTH
+        elif self.position.x > WINDOW_WIDTH:
+            self.position.x = 0
+        self.rect.bottomleft = self.position
+
     def check_collisions(self):
         """Check for collisios with platforms and portals"""
-        pass
+        #Collision check between ruby and platform
+        collided_platforms = pygame.sprite.spritecollide(self, self.platform_group, False)
+        if collided_platforms:
+            self.position.y = collided_platforms[0].rect.top+ 1
+            self.velocity.y = 0
+
+        #Collision check for portals
+        if pygame.sprite.spritecollide(self, self.portal_group, False):
+            self.portal_sound.play()
+            #Determine which portal you are moving to
+            # lEft and right
+            if self.position.x > WINDOW_WIDTH/2:
+                self.position.x = 86
+            else:
+                self.position.x = WINDOW_WIDTH - 150
+            
+            #Top and bottom
+            if self.position.y > WINDOW_WIDTH/2:
+                self.position.y = 64
+            else:
+                self.position.y = WINDOW_HEIGHT - 132
+
     def animate(self, sprite_list, speed):
         """Animate the ruby's actions"""
-        pass
+        if self.current_sprite < len(sprite_list)-1:
+            self.current_sprite += speed
+        else:
+            self.current_sprite = 0
+        self.image = sprite_list[int(self.current_sprite)]
 
 class Portal(pygame.sprite.Sprite):
     """A class that if collided with will transport you"""
@@ -833,7 +1062,10 @@ background_rect = background_image.get_rect()
 background_rect.topleft = (0,0)
 
 #Create a game 
-game = Game()
+game = Game(player, zombie_group, platform_group, portal_group, bullet_group, ruby_group)
+
+game.pause_game("Zombie Knight", "Press 'Enter' to Begin")
+pygame.mixer.music.play(-1,0.0)
 
 running = True
 while running:
@@ -870,6 +1102,9 @@ while running:
 
     zombie_group.update()
     zombie_group.draw(display_surface)
+
+    ruby_group.update()
+    ruby_group.draw(display_surface)
 
     game.update()
     game.draw()
