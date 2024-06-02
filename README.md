@@ -1,4 +1,7 @@
 # pygame_zombie_knight
 Pygame to create a zombie knight
 
-TESSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSST
+Left Arrow: Move Left
+Right Arrow: Move Right
+Up Arrow: Shoot
+Space: Jump
